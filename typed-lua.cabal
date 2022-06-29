@@ -3,15 +3,18 @@ name:               typed-lua
 version:            0.1.0.0
 homepage:           https://github.com/m4xine/typed-lua
 bug-reports:        https://github.com/m4xine/typed-lua/issues
-license:            NONE
+license:            CC0-1.0
 author:             m4xine
 maintainer:         maxined@pm.me
 category:           Compilers/Interpreters
 
 executable typed-lua
     main-is:            Main.hs
-    other-modules:  
-    build-depends:      base ^>=4.14.3.0
+    other-modules:      Source
+    build-depends:      
+        base ^>=4.14.3.0,
+        text ^>=1.2,
+        megaparsec ^>=9.2.1
     hs-source-dirs:     app
     default-language:   Haskell2010
     default-extensions:
