@@ -1,4 +1,8 @@
-module Source where 
+module Source 
+  ( Source(..)
+  , SrcSpan(..)
+  , srcSpan
+  ) where 
 
 import           Control.Exception      (assert)
 import qualified Data.Text         as T
