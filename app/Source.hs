@@ -1,18 +1,26 @@
 module Source 
   ( Source(..)
+  , readSource
   , SrcSpan(..)
   , srcSpan
   ) where 
 
-import           Control.Exception      (assert)
-import qualified Data.Text         as T
-import           Text.Megaparsec        (SourcePos(..), unPos)
+import           Control.Monad.IO.Class       (liftIO, MonadIO)
+import           Control.Exception            (assert)
+import qualified Data.Text              as T
+import qualified Data.Text.IO           as T
+import           Text.Megaparsec              (SourcePos(..), unPos)
 
 -- | Representation of a source file.
 data Source = MkSource
   { sourcePath    :: FilePath
   , sourceContent :: T.Text 
   } deriving Show
+
+-- | Attemps to read a source file from the given 'FilePath'. 
+readSource :: MonadIO m => FilePath -> m Source
+readSource sourcePath =
+  liftIO $ MkSource sourcePath <$> T.readFile sourcePath
 
 -- | Spanned region within a source file.
 data SrcSpan = MkSrcSpan
