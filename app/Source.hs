@@ -17,7 +17,7 @@ data Source = MkSource
   , sourceContent :: T.Text 
   } deriving Show
 
--- | Attemps to read a source file from the given 'FilePath'. 
+-- | Attempts to read a source file from the given 'FilePath'. 
 readSource :: MonadIO m => FilePath -> m Source
 readSource sourcePath =
   liftIO $ MkSource sourcePath <$> T.readFile sourcePath
