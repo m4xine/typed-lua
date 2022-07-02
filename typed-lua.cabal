@@ -10,7 +10,10 @@ category:           Compilers/Interpreters
 
 executable typed-lua
     main-is:            Main.hs
-    other-modules:      Source
+    other-modules:      
+        Source,
+        Syntax,
+        Parser 
     build-depends:      
         base ^>=4.14.3.0,
         text ^>=1.2,
@@ -18,3 +21,6 @@ executable typed-lua
     hs-source-dirs:     app
     default-language:   Haskell2010
     default-extensions:
+        RecordWildCards,
+        OverloadedStrings
+    ghc-options: -Wall
