@@ -19,8 +19,8 @@ data Source = MkSource
 
 -- | Attempts to read a source file from the given 'FilePath'. 
 readSource :: MonadIO m => FilePath -> m Source
-readSource sourcePath =
-  liftIO $ MkSource sourcePath <$> T.readFile sourcePath
+readSource path =
+  liftIO $ MkSource path <$> T.readFile path
 
 -- | Spanned region within a source file.
 data SrcSpan = MkSrcSpan
