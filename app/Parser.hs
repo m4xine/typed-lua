@@ -1,34 +1,48 @@
-module Parser
-  ( parseAst
-  ) where
+module Parser where
 
-import           Control.Applicative              (Alternative(..))
-import           Data.Bifunctor                   (Bifunctor(..))
-import           Data.Void                        (Void)
-import           Data.Functor                     (($>), void)
-import qualified Data.Text                  as T
-import           Text.Megaparsec                  (parse, Parsec, ParseErrorBundle, oneOf, getSourcePos, MonadParsec(..), choice, sepBy, between, manyTill, anySingle, option, sepBy1)
-import           Text.Megaparsec.Char.Lexer       (lexeme)
-import           Text.Megaparsec.Char             (space, string, letterChar, char, digitChar, hspace, newline)
-import           Source                           (Source(..), SrcSpan, srcSpan)
-import           Syntax                           (Ast(..), FunDef(..), Def(..), Stmt(..), Expr(..), Param(..), Type(..), LocalDef(..), RecordType(..), RecordLabel(..), RecordValue(..), RecordField(..), RecordSelect(..))
+
+import            Control.Applicative             ((<|>), Alternative (..), optional)
+import            Control.Monad.Combinators.Expr  (makeExprParser, Operator (..))
+import            Control.Comonad.Cofree          (Cofree ((:<)))
+import            Data.Functor                    (($>), void)
+import            Data.Void                       (Void)
+import            Data.Composition                ((.:))
+import qualified  Data.Text       as T
+import            Text.Megaparsec                 (Parsec, getSourcePos, between, sepBy, oneOf, choice, manyTill, anySingle, MonadParsec (try, lookAhead, eof), ParseErrorBundle, parse)
+import            Text.Megaparsec.Char.Lexer      (lexeme)
+import            Text.Megaparsec.Char            (space, hspace, string, letterChar, digitChar, char, newline)
+import            Source                          (SrcSpan, srcSpan, Source (..))
+import            Syntax                          (Expr, ExprF(..), Stmt (..), VarDef (..), FunDef (..), Param (..), Ast (..), Toplevel (..))
 
 type Parser = Parsec Void T.Text
 
 l :: Parser a -> Parser a
 l = lexeme space
 
-string_ :: T.Text -> Parser ()
-string_ = void . string
+lh :: Parser a -> Parser a
+lh = lexeme hspace
 
 lstring :: T.Text -> Parser T.Text
 lstring = l . string
 
 lstring_ :: T.Text -> Parser ()
-lstring_ = void . lstring
+lstring_ = void . lstring 
 
-lh :: Parser a -> Parser a
-lh = lexeme hspace
+parens :: Parser a -> Parser a
+parens = between (lstring "(") (string ")")
+
+bracks :: Parser a -> Parser a
+bracks = between (lstring "[") (string "]")
+
+curlybracks :: Parser a -> Parser a
+curlybracks = between (lstring "{") (string "}")
+
+name' :: Parser T.Text
+name' =
+    T.cons <$> head' <*> (T.pack <$> many tail')
+  where
+    head' = letterChar <|> char '_'
+    tail' = head' <|> digitChar <|> oneOf ['\'', '-']
 
 src :: Parser a -> Parser (SrcSpan, a)
 src p = do
@@ -37,147 +51,126 @@ src p = do
   end <- getSourcePos
   pure (srcSpan begin end, a)
 
-lsrc :: Parser a -> Parser (SrcSpan, a)
-lsrc = l . src
+cosrc :: Parser (f (Cofree f SrcSpan)) -> Parser (Cofree f SrcSpan)
+cosrc = (uncurry (:<) <$>) . src
 
-name :: Parser T.Text
-name = T.cons <$> head' <*> (T.pack <$> many tail')
+cosrc1
+  :: Parser (Cofree f SrcSpan -> f (Cofree f SrcSpan))
+  -> Parser (Cofree f SrcSpan -> Cofree f SrcSpan)
+cosrc1 p = do
+  (s, f) <- src p
+  pure $ (s :<) . f
+
+cosrc2
+  :: Parser (Cofree f SrcSpan -> Cofree f SrcSpan -> f (Cofree f SrcSpan))
+  -> Parser (Cofree f SrcSpan -> Cofree f SrcSpan -> Cofree f SrcSpan)
+cosrc2 p = do
+  (s, f) <- src p
+  pure $ (s :<) .: f
+
+dynamict :: Parser (Expr SrcSpan)
+dynamict = cosrc $ string "?" $> DynamicT
+
+arrayt :: Parser (Expr SrcSpan)
+arrayt = cosrc $ ArrayT <$> bracks texpr
+
+arrayl :: Parser (Expr SrcSpan)
+arrayl = cosrc $ ArrayL <$> bracks (sepBy expr $ lstring ",")
+
+recordt :: Parser (Expr SrcSpan)
+recordt =
+    cosrc $ RecordT <$> curlybracks (sepBy field $ lstring ",")
   where
-    head' = letterChar <|> char '_'
-    tail' = head' <|> digitChar <|> oneOf ['\'', '-']
+    field = (,) <$> l name' <*> (lstring ":" *> l texpr)
 
-parens :: Parser a -> Parser a
-parens = between (lstring "(") (string ")")
-
-recordLabel :: Parser RecordLabel
-recordLabel = 
-    choice [dyn, typed]
+recordl :: Parser (Expr SrcSpan)
+recordl =
+    cosrc $ RecordL <$> curlybracks (sepBy field $ lstring ",")
   where
-    dyn = do
-      lstring_ "?"
-      (recordLabelNameSpan, recordLabelName) <- src name
-      let recordLabelTypeSpan = Nothing
-          recordLabelType     = TDynamic
-      pure MkRecordLabel {..}
-    typed = do
-      (recordLabelNameSpan, recordLabelName) <- lsrc name
-      lstring_ ":"
-      (recordLabelTypeSpan', recordLabelType) <- src type'
-      let recordLabelTypeSpan = Just recordLabelTypeSpan'
-      pure MkRecordLabel {..}
+    field = (,) <$> l name' <*> (lstring "=" *> l expr)
 
-recordType :: Parser RecordType 
-recordType = do 
-  recordTypeLabels <- do
-    between (lstring "{") (string "}") (sepBy1 (l recordLabel) $ lstring ",")
-  pure MkRecordType {..}
+stringl :: Parser (Expr SrcSpan)
+stringl =
+  cosrc . fmap (StringL . T.pack) $ char '"' *> manyTill anySingle (char '"')
 
-type' :: Parser Type
-type' = 
-    choice [try tunit, trecord, tarray, tstring, tname]
+name :: Parser (Expr SrcSpan)
+name = cosrc $ Name <$> name'
+
+unitt :: Parser (Expr SrcSpan)
+unitt = cosrc $ string "{}" $> UnitT
+
+unitl :: Parser (Expr SrcSpan)
+unitl = cosrc $ string "{}" $> UnitL
+
+texpr :: Parser (Expr SrcSpan)
+texpr = choice [try unitt, arrayt, recordt, name, dynamict]
+
+expr :: Parser (Expr SrcSpan)
+expr =
+    makeExprParser term table
   where
-    trecord = TRecord <$> recordType 
-    tarray = between (lstring "[") (string "]") (TArray <$> type')
-    tstring = string "String" $> TString
-    tname = TName <$> name 
-    tunit = string "{}" $> TUnit
+    term = choice
+      [ try unitl
+      , arrayl
+      , recordl
+      , stringl
+      , name
+      , parens expr
+      ]
+    table =
+      -- TODO: Infix operators
+      [ [ invoke' ]
+      , [ select' ]
+      ]
+    invoke' = 
+      Postfix . cosrc1 $ flip Invoke <$> parens (sepBy expr $ lstring ",")
+    select' = 
+      Postfix . cosrc1 $ flip Select <$> (string "." *> name')
 
-param :: Parser Param
-param = 
-    choice [dyn, typed]
+varDef :: Parser (VarDef SrcSpan)
+varDef = do
+  lstring_ "local"
+  varDefName  <- l name'
+  varDefType  <- optional $ lstring ":" *> l texpr
+  varDefValue <- lstring "=" *> expr
+  pure MkVarDef {..}
+
+stmt :: Parser (Stmt SrcSpan)
+stmt =
+    choice [var', return', stmt']
   where
-    dyn = do
-      lstring_ "?"
-      (paramNameSpan, paramName) <- lsrc name
-      let paramTypeSpan = Nothing
-          paramType     = TDynamic
-      pure MkParam {..}
-    typed = do
-      (paramNameSpan, paramName) <- lsrc name
-      lstring_ ":"
-      (paramTypeSpan', paramType) <- lsrc type'
-      let paramTypeSpan = Just paramTypeSpan'
-      pure MkParam {..}
+    var' = LocalDef <$> varDef
+    return' = fmap Return $ lstring "return" *> expr
+    stmt' = Stmt <$> expr
 
-params :: Parser [Param]
+stmts :: Parser [Stmt SrcSpan]
+stmts = 
+    manyTill (lh stmt <* lineTerm) stmtsTerm
+  where
+    lineTerm = void (l newline) <|> void (lstring ";")
+    stmtsTerm = lookAhead $ string "end"
+
+param :: Parser (Param SrcSpan)
+param = do
+  (paramNameSpan, paramName)  <- l $ src name'
+  paramType                   <- lstring ":" *> l texpr
+  pure MkParam {..}
+    
+params :: Parser [Param SrcSpan]
 params = parens . sepBy param $ lstring ","
 
-recordField :: Parser RecordField
-recordField = do
-  (recordFieldNameSpan, recordFieldName) <- lsrc name
-  lstring_ "="
-  (recordFieldValueSpan, recordFieldValue) <- src expr
-  pure MkRecordField {..}
-
-recordValue :: Parser RecordValue
-recordValue = do
-  recordValueFields <- between (lstring "{") (string "}") (sepBy (l recordField) $ lstring ",")
-  pure MkRecordValue {..}
-
-expr :: Parser Expr
-expr = 
-    choice [try eunit, try eselect, erecord, try einvoke, estring, ename]
-  where
-    erecord = ERecord <$> recordValue
-    eselect = ESelect <$> do
-      recordSelectRecord <- choice [erecord, ename, try einvoke {-, TODO: Allow chained record selection -}]
-      string_ "."
-      (recordSelectLabelSpan, recordSelectLabel) <- src name
-      pure MkRecordSelect {..} 
-    einvoke =
-      EInvoke
-        <$> choice [ename {-, TODO: Allow chained function invocation-}]
-        <*> (parens . sepBy expr $ lstring ",")  
-    estring = do
-      string_ "\""
-      xs <- manyTill anySingle $ string "\""
-      pure . EString $ T.pack xs 
-    ename = EName <$> name 
-    eunit = string "{}" $> EUnit 
-
-localDef :: Parser LocalDef
-localDef = do
-  lstring_ "local"
-  (localDefSpan, localDefName) <- lsrc name
-  (localDefTypeSpan, localDefType) <- do 
-    option (Nothing, Nothing) 
-      $ bimap Just Just <$> (lstring ":" *> lsrc type')
-  lstring_ "="
-  (localDefValSpan, localDefVal) <- src expr
-  pure MkLocalDef {..}
-
-stmt :: Parser Stmt
-stmt = 
-    choice [local, return', stmt']
-  where
-    local = SLocalDef <$> localDef 
-    return' = fmap SReturn $ lstring "return" *> expr
-    stmt' = Stmt <$> expr 
-
-stmts :: Parser [Stmt]
-stmts = 
-    manyTill (lh stmt <* lineTerminator) stmtsTerminator  
-  where
-    lineTerminator = void (l newline) <|> void (lstring ";")
-    stmtsTerminator = lookAhead $ string "end"
-
-funDef :: Parser FunDef
+funDef :: Parser (FunDef SrcSpan)
 funDef = do
-    lstring_ "function"
-    (funDefNameSpan, funDefName) <- lsrc name
-    funDefParams <- l params
-    (funDefRetTypeSpan, funDefRetType) <- retty
-    (funDefBodySpan, funDefBody) <- lsrc stmts 
-    lstring_ "end"
-    pure MkFunDef {..}
-  where 
-    retty = option 
-      (Nothing, TUnit) 
-      (lstring ":" >> first Just <$> lsrc type') 
+  lstring_ "function"
+  funDefName    <- l name'
+  funDefParams  <- l params
+  funDefRetType <- optional $ lstring ":" *> l texpr
+  funDefBody    <- l stmts <* lstring "end"
+  pure MkFunDef {..}
 
--- | Attempts to parse an 'Ast' from the given source file. 
-parseAst :: Source -> Either (ParseErrorBundle T.Text Void) Ast
+-- | Attempts to parse an 'Ast' from a given source file.
+parseAst :: Source -> Either (ParseErrorBundle T.Text Void) (Ast SrcSpan)
 parseAst src'@MkSource {..} =
     MkAst src' <$> parse (many def <* eof) sourcePath sourceContent
   where
-    def = l $ choice [DLocalDef <$> localDef, DFunDef <$> funDef]
+    def = l $ choice [VarDef <$> varDef, FunDef <$> funDef]

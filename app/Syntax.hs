@@ -1,119 +1,81 @@
 module Syntax 
-  ( Param(..)
-  , RecordLabel(..)
-  , RecordType(..)
-  , Type(..)
-  , RecordField(..)
-  , RecordValue(..)
-  , RecordSelect(..)
-  , Expr(..)
-  , LocalDef(..)
+  ( ExprF(..)
+  , Expr
+  , Param(..)
+  , VarDef(..)
   , Stmt(..)
   , FunDef(..)
-  , Def(..)
+  , Toplevel(..)
   , Ast(..)
   ) where
 
-import qualified Data.Text          as T 
-import           Source                   (SrcSpan, Source)
+import            Control.Comonad.Cofree        (Cofree)
+import qualified  Data.Text               as T
+import            Text.Show.Deriving            (deriveShow1)
+import            Source                        (Source, SrcSpan)
 
--- | Parameter representation
-data Param = MkParam
+-- | Representation of an expression.
+-- See 'Expr' for use with 'Cofree'.  
+data ExprF a
+  = DynamicT                -- ^ > Dynamic type     ~ ?
+  | ArrayT    a             -- ^ > Array type       ~ [T]  
+  | ArrayL    [a]           -- ^ > Array literal    ~ [x, y, z]
+  | RecordT   [(T.Text, a)] -- ^ > Record type      ~ {a : A, b : T}
+  | RecordL   [(T.Text, a)] -- ^ > Record literal   ~ {a = x, b = y}
+  | Select    a T.Text      -- ^ > Record selection ~ r.x
+  | Invoke    a [a]         -- ^ > Invocation       ~ f(x, y, z)
+  | StringL   T.Text        -- ^ > String literal   ~ "Hello, world!"
+  | Name      T.Text        -- ^ > Name             ~ fooBar
+  | UnitT                   -- ^ > Unit type        ~ {}
+  | UnitL                   -- ^ > Unit literal     ~ {}
+  deriving Functor
+
+deriveShow1 ''ExprF 
+
+type Expr x = Cofree ExprF x 
+
+-- | Parameter representation.
+data Param x = MkParam
   { paramNameSpan :: SrcSpan
-  , paramName     :: T.Text
-  , paramTypeSpan :: Maybe SrcSpan
-  , paramType     :: Type
-  } deriving Show 
+  , paramName     :: T.Text 
+  , paramType     :: Expr x 
+  }
+deriving instance Show x => Show (Param x)
 
--- | Record label with type representation.
-data RecordLabel = MkRecordLabel
-  { recordLabelNameSpan :: SrcSpan
-  , recordLabelName     :: T.Text
-  , recordLabelTypeSpan :: Maybe SrcSpan
-  , recordLabelType     :: Type 
-  } deriving Show 
-
--- | Record type representation.
-newtype RecordType = MkRecordType
-  { recordTypeLabels :: [RecordLabel]
-  } deriving Show 
-
--- | Type representation.
-data Type 
-  = TRecord   RecordType
-  | TArray    Type 
-  | TString
-  | TName     T.Text
-  | TDynamic
-  | TUnit
-  deriving Show 
-
--- | Record field representation.
-data RecordField = MkRecordField
-  { recordFieldNameSpan   :: SrcSpan 
-  , recordFieldName       :: T.Text
-  , recordFieldValueSpan  :: SrcSpan
-  , recordFieldValue      :: Expr 
-  } deriving Show
-
--- | Record value/constructor representation.
-newtype RecordValue = MkRecordValue
-  { recordValueFields :: [RecordField]
-  } deriving Show 
-
--- | Record selection representation.
-data RecordSelect = MkRecordSelect
-  { recordSelectRecord    :: Expr
-  , recordSelectLabelSpan :: SrcSpan 
-  , recordSelectLabel     :: T.Text 
-  } deriving Show 
-
--- | Expression representation.
-data Expr
-  = ERecord RecordValue
-  | ESelect RecordSelect
-  | EInvoke Expr [Expr]
-  | EString T.Text 
-  | EName   T.Text 
-  | EUnit
-  deriving Show 
-
--- | Local variable definition representation.
-data LocalDef = MkLocalDef 
-  { localDefSpan      :: SrcSpan
-  , localDefName      :: T.Text
-  , localDefTypeSpan  :: Maybe SrcSpan
-  , localDefType      :: Maybe Type
-  , localDefValSpan   :: SrcSpan
-  , localDefVal       :: Expr 
-  } deriving Show 
+-- | Variable definition representation.
+data VarDef x = MkVarDef
+  { varDefName  :: T.Text
+  , varDefType  :: Maybe (Expr x)
+  , varDefValue :: Expr x
+  }
+deriving instance Show x => Show (VarDef x)
 
 -- | Statement representation.
-data Stmt
-  = SLocalDef LocalDef
-  | SReturn   Expr
-  | Stmt      Expr -- ^ Expression terminated with a newline or semicolon
-  deriving Show 
+data Stmt x
+  = LocalDef  (VarDef x)
+  | Return    (Expr x)
+  -- | Regular expression terminated with a newline or semicolon.
+  | Stmt      (Expr x)    
+deriving instance Show x => Show (Stmt x)
 
--- | Function definition representation. 
-data FunDef = MkFunDef
-  { funDefNameSpan    :: SrcSpan
-  , funDefName        :: T.Text
-  , funDefParams      :: [Param]
-  , funDefRetTypeSpan :: Maybe SrcSpan
-  , funDefRetType     :: Type 
-  , funDefBodySpan    :: SrcSpan
-  , funDefBody        :: [Stmt]
-  } deriving Show 
+-- | Function definition representation.
+data FunDef x = MkFunDef
+  { funDefName    :: T.Text
+  , funDefParams  :: [Param x]
+  , funDefRetType :: Maybe (Expr x)
+  , funDefBody    :: [Stmt x]
+  }
+deriving instance Show x => Show (FunDef x)
 
--- | Top-level definition.
-data Def 
-  = DLocalDef LocalDef 
-  | DFunDef FunDef 
-  deriving Show 
+-- | Top level item representation.
+data Toplevel x
+  = FunDef (FunDef x)
+  | VarDef (VarDef x)
+deriving instance Show x => Show (Toplevel x)
 
--- | Top-level representation of a parsed source file.
-data Ast = MkAst 
+-- | Parsed abstract syntax tree with the origin 'Source'.
+data Ast x = MkAst
   { astSource   :: Source
-  , astTopLevel :: [Def]
-  } deriving Show 
+  , astTopLevel :: [Toplevel x] 
+  } 
+deriving instance Show x => Show (Ast x)
